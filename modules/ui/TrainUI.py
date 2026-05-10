@@ -584,7 +584,7 @@ class TrainUI(ctk.CTk):
         if training_method != TrainingMethod.EMBEDDING and "embedding" in self.tabview._tab_dict:
             self.tabview.delete("embedding")
 
-        if training_method == TrainingMethod.LORA and "LoRA" not in self.tabview._tab_dict:
+        if training_method in (TrainingMethod.LORA, TrainingMethod.EMBEDDING_LORA) and "LoRA" not in self.tabview._tab_dict:
             self.lora_tab = LoraTab(self.tabview.add("LoRA"), self.train_config, self.ui_state)
         if training_method == TrainingMethod.EMBEDDING and "embedding" not in self.tabview._tab_dict:
             self.embedding_tab(self.tabview.add("embedding"))

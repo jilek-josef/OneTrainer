@@ -142,6 +142,7 @@ class TopBar:
             values = [
                 ("Fine Tune", TrainingMethod.FINE_TUNE),
                 ("LoRA", TrainingMethod.LORA),
+                ("Embedding LoRA", TrainingMethod.EMBEDDING_LORA),
             ]
 
         # training method

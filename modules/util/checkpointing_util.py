@@ -12,6 +12,7 @@ from torch import nn
 
 from diffusers.models.attention import BasicTransformerBlock, JointTransformerBlock
 from diffusers.models.transformers.sana_transformer import SanaTransformerBlock
+from diffusers.models.transformers.transformer_cosmos import CosmosTransformerBlock
 from diffusers.models.transformers.transformer_hidream_image import (
     HiDreamImageSingleTransformerBlock,
     HiDreamImageTransformerBlock,
@@ -420,4 +421,12 @@ def enable_checkpointing_for_ernie_transformer(
 ) -> LayerOffloadConductor:
     return enable_checkpointing(model, config, config.compile, [
         (model.layers, ["x"]),
+    ])
+
+def enable_checkpointing_for_cosmos_transformer(
+        model: nn.Module,
+        config: TrainConfig,
+) -> LayerOffloadConductor:
+    return enable_checkpointing(model, config, config.compile, [
+        (CosmosTransformerBlock, ["hidden_states", "encoder_hidden_states"]),
     ])

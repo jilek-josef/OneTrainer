@@ -61,6 +61,8 @@ class ModelTab:
             self.__setup_flux_2_ui(base_frame)
         elif self.train_config.model_type.is_z_image():
             self.__setup_z_image_ui(base_frame)
+        elif self.train_config.model_type.is_anima():
+            self.__setup_anima_ui(base_frame)
         elif self.train_config.model_type.is_chroma():
             self.__setup_chroma_ui(base_frame)
         elif self.train_config.model_type.is_qwen():
@@ -155,6 +157,25 @@ class ModelTab:
         )
 
     def __setup_z_image_ui(self, frame):
+        row = 0
+        row = self.__create_base_dtype_components(frame, row)
+        row = self.__create_base_components(
+            frame,
+            row,
+            has_transformer=True,
+            allow_override_transformer=True,
+            has_text_encoder_1=True,
+            has_vae=True,
+        )
+        row = self.__create_output_components(
+            frame,
+            row,
+            allow_safetensors=True,
+            allow_diffusers=self.train_config.training_method == TrainingMethod.FINE_TUNE,
+            allow_legacy_safetensors=self.train_config.training_method == TrainingMethod.LORA,
+        )
+
+    def __setup_anima_ui(self, frame):
         row = 0
         row = self.__create_base_dtype_components(frame, row)
         row = self.__create_base_components(

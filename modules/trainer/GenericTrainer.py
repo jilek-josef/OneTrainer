@@ -752,10 +752,14 @@ class GenericTrainer(BaseTrainer):
                     loss = self.model_setup.calculate_loss(self.model, batch, model_output_data, self.config)
 
                     loss = loss / self.config.gradient_accumulation_steps
+                    if torch.cuda.is_available():
+                        print(f"[VRAM] before backward: allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB max={torch.cuda.max_memory_allocated() / 1e9:.2f}GB")
                     if scaler:
                         scaler.scale(loss).backward()
                     else:
                         loss.backward()
+                    if torch.cuda.is_available():
+                        print(f"[VRAM] after backward: allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB max={torch.cuda.max_memory_allocated() / 1e9:.2f}GB")
 
                     has_gradient = True
                     detached_loss = loss.detach()
@@ -781,6 +785,9 @@ class GenericTrainer(BaseTrainer):
                             if self.config.clip_grad_norm is not None:
                                 nn.utils.clip_grad_norm_(self.parameters, self.config.clip_grad_norm)
                             self.model.optimizer.step()
+
+                        if torch.cuda.is_available():
+                            print(f"[VRAM] after optimizer step: allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB max={torch.cuda.max_memory_allocated() / 1e9:.2f}GB")
 
                         lr_scheduler.step()  # done before zero_grad, because some lr schedulers need gradients
                         self.model.optimizer.zero_grad(set_to_none=True)

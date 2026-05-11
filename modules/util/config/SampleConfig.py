@@ -93,6 +93,13 @@ def _get_model_defaults(model_type) -> dict:
             "diffusion_steps": 28,
             "cfg_scale": 4.0,
         })
+    elif model_type.is_anima():
+        defaults.update({
+            "width": 1024,
+            "height": 1024,
+            "diffusion_steps": 28,
+            "cfg_scale": 4.0,
+        })
     elif model_type.is_hunyuan_video():
         defaults.update({
             "width": 848,

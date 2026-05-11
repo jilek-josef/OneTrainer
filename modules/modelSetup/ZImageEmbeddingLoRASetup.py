@@ -396,15 +396,21 @@ class ZImageEmbeddingLoRASetup(BaseZImageSetup):
         """
         gen_images = data["images"]  # [B, 3, H, W] in [0, 1], on GPU
 
-        # Get bucket size from crop_resolution (e.g. 1216)
+        # Extract bucket resolution (H, W) from batch — aspect ratio is preserved
         crop_res = batch.get("crop_resolution", None)
-        bucket_size = None
+        target_resolution = None
         if crop_res is not None:
             if torch.is_tensor(crop_res):
-                bucket_size = int(crop_res[0][0] if crop_res.dim() > 1 else crop_res[0])
+                target_resolution = (
+                    int(crop_res[0][0] if crop_res.dim() > 1 else crop_res[0]),
+                    int(crop_res[0][1] if crop_res.dim() > 1 else crop_res[1]),
+                )
             elif isinstance(crop_res, list) and len(crop_res) > 0:
                 first = crop_res[0]
-                bucket_size = int(first[0] if isinstance(first, (list, tuple)) else first)
+                target_resolution = (
+                    int(first[0] if isinstance(first, (list, tuple)) else first),
+                    int(first[1] if isinstance(first, (list, tuple)) else first),
+                )
 
         # ---- Generated images: tensor -> embed (WITH gradients) ----
         gen_features = self._embed_tensor(gen_images)
@@ -416,7 +422,7 @@ class ZImageEmbeddingLoRASetup(BaseZImageSetup):
         ref_pil = [Image.open(p).convert("RGB") for p in image_paths]
 
         with torch.no_grad():
-            ref_features = self._embed(ref_pil, bucket_size=bucket_size)
+            ref_features = self._embed(ref_pil, bucket_size=target_resolution[0] if target_resolution else None)
 
         loss_eva = F.mse_loss(gen_features, ref_features)
 
@@ -427,9 +433,9 @@ class ZImageEmbeddingLoRASetup(BaseZImageSetup):
             arr = (gen_np[i].transpose(1, 2, 0) * 255).clip(0, 255).astype("uint8")
             gen_pil.append(Image.fromarray(arr))
 
-        gen_features_radio = self._embed_pil_radio(gen_pil)
-        ref_features_radio = self._embed_pil_radio(ref_pil)
-        
+        gen_features_radio = self._embed_pil_radio(gen_pil, target_resolution=target_resolution)
+        ref_features_radio = self._embed_pil_radio(ref_pil, target_resolution=target_resolution)
+
         loss_radio = F.mse_loss(gen_features_radio, ref_features_radio)
         total_loss = self.EVA_WEIGHT * loss_eva + self.RADIO_WEIGHT * loss_radio
         print(f"EVA {loss_eva} RAD {loss_radio}")
@@ -521,17 +527,30 @@ class ZImageEmbeddingLoRASetup(BaseZImageSetup):
 
         return features  # [B, D] on CPU, connected to generator graph
 
-    def _embed_pil_radio(self, pil_images: list[Image.Image]) -> Tensor | None:
+    def _embed_pil_radio(
+            self,
+            pil_images: list[Image.Image],
+            target_resolution: tuple[int, int] | None = None,
+    ) -> Tensor | None:
         """RADIO embed from PIL images. Resize (cover) + center crop to RADIO's step.
         Always frozen — no gradients. Used for both generated and reference."""
 
+        # Resize to bucket resolution first so RADIO doesn't process huge original images.
+        # target_resolution is (H, W) — we resize to the exact bucket dims.
+        resized = []
+        for img in pil_images:
+            if target_resolution is not None:
+                target_h, target_w = target_resolution
+                img = img.resize((target_w, target_h), Image.BICUBIC)
+            resized.append(img)
+
         # RADIO needs resolution as multiple of its step
-        w, h = pil_images[0].size
+        w, h = resized[0].size
         nearest = self._radio_model.get_nearest_supported_resolution(h, w)
         target_w, target_h = nearest.width, nearest.height
 
         processed = []
-        for img in pil_images:
+        for img in resized:
             iw, ih = img.size
             # Cover resize: scale so both dims >= target, then center crop
             scale = max(target_w / iw, target_h / ih)

@@ -145,6 +145,7 @@ class TopBar:
                 ("Fine Tune", TrainingMethod.FINE_TUNE),
                 ("LoRA", TrainingMethod.LORA),
                 ("Embedding LoRA", TrainingMethod.EMBEDDING_LORA),
+                ("Distill LoRA", TrainingMethod.DISTILL_LORA),
             ]
 
         # training method

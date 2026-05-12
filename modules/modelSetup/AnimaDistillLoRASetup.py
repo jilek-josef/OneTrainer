@@ -325,7 +325,12 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             cfg_scale: CFG scale (1.0 = no CFG)
             use_lora: if True, use LoRA (student); if False, base model (teacher)
         """
-        scheduler = copy.deepcopy(model.noise_scheduler)
+        # Use a fresh scheduler to avoid sigma_max mismatch
+        from diffusers import FlowMatchEulerDiscreteScheduler
+        scheduler = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=3.0,
+        )
         scheduler.set_timesteps(num_steps, device=self.train_device)
         timesteps = scheduler.timesteps
         sigmas = scheduler.sigmas.to(self.train_device)

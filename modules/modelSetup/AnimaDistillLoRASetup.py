@@ -120,7 +120,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
 
     # Student config (trained, no CFG)
     STUDENT_STEPS: int = 1
-    STUDENT_CFG_SCALE: float = 5.0  # TEST: was 1.0
+    STUDENT_CFG_SCALE: float = 1.0
 
     # Mode: "prompt_only" or "image_pairs" — auto-detected from batch if not set
     DISTILL_MODE: str = "image_pairs"
@@ -383,35 +383,46 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
 
         with torch.no_grad() if not use_lora else torch.enable_grad(), model.autocast_context:
             for i, t in enumerate(timesteps):
-                sigma = sigmas[i]
-                timestep_t = sigma.expand(latent.shape[0]).to(model.train_dtype.torch_dtype())
-                latent_input = latent.to(dtype=model.train_dtype.torch_dtype())
+                current_sigma = sigmas[i]
+                current_t = current_sigma / (current_sigma + 1)
+                c_in = 1 - current_t
+                c_skip = 1 - current_t
+                c_out = -current_t
+                timestep = current_t.expand(latent.shape[0]).to(model.train_dtype.torch_dtype())
+                
+                latent_model_input = latent * c_in
+                latent_model_input = latent_model_input.to(dtype=model.train_dtype.torch_dtype())
 
-                velocity_cond = checkpoint(
+                noise_pred_cond = checkpoint(
                     _transformer_step,
-                    latent_input,
-                    timestep_t,
+                    latent_model_input,
+                    timestep,
                     text_encoder_output_dtype,
                     padding_mask,
                     use_reentrant=False,
                 ).float()
+                noise_pred_cond = c_skip * latent + c_out * noise_pred_cond
 
                 if do_cfg:
-                    velocity_uncond = checkpoint(
+                    noise_pred_uncond = checkpoint(
                         _transformer_step,
-                        latent_input,
-                        timestep_t,
+                        latent_model_input,
+                        timestep,
                         uncond_text_encoder_output_dtype,
                         padding_mask,
                         use_reentrant=False,
                     ).float()
-                    velocity = velocity_uncond + cfg_scale * (velocity_cond - velocity_uncond)
+                    noise_pred_uncond = c_skip * latent + c_out * noise_pred_uncond
+                    noise_pred = noise_pred_uncond + cfg_scale * (noise_pred_cond - noise_pred_uncond)
                 else:
-                    velocity = velocity_cond
+                    noise_pred = noise_pred_cond
+
+                # Convert to velocity for scheduler
+                velocity = (latent - noise_pred) / current_sigma
 
                 if i == 0 or i == len(timesteps) - 1:
-                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={sigma:.4f} "
-                          f"latent_in min={latent_input.min():.4f} max={latent_input.max():.4f} "
+                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={current_sigma:.4f} "
+                          f"latent_in min={latent_model_input.min():.4f} max={latent_model_input.max():.4f} "
                           f"vel min={velocity.min():.4f} max={velocity.max():.4f} mean={velocity.mean():.4f}")
 
                 latent = scheduler.step(velocity, t, latent, return_dict=False)[0]

@@ -505,7 +505,6 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             # Save debug images
             try:
                 from PIL import Image
-                import os
                 debug_dir = os.path.join(config.debug_dir, "distill_lora")
                 os.makedirs(debug_dir, exist_ok=True)
 

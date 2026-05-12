@@ -528,6 +528,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             return {
                 "student_images": student_images,
                 "teacher_images": teacher_images,
+                "distill_mode": distill_mode,
             }
 
     # ==================================================================
@@ -572,6 +573,10 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
 
         student_features_radio = self._embed_pil_radio(student_pil, target_resolution=target_resolution)
         self._log_vram("after student RADIO features")
+
+        # Determine mode from data dict (set in predict)
+        distill_mode = data.get("distill_mode", self.DISTILL_MODE)
+        teacher_images = data.get("teacher_images", None)
 
         if distill_mode == "prompt_only" and teacher_images is not None:
             # ---- Mode 1: Distill from teacher ----

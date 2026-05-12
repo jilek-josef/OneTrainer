@@ -498,6 +498,14 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             model.transformer_lora.set_dropout(0.0)
             model.transformer.eval()
 
+            # Check model weights for NaN/Inf
+            has_nan = any(p.isnan().any() for p in model.transformer.parameters() if p is not None)
+            has_inf = any(p.isinf().any() for p in model.transformer.parameters() if p is not None)
+            if has_nan:
+                print("[WARNING] Transformer weights contain NaN!")
+            if has_inf:
+                print("[WARNING] Transformer weights contain Inf!")
+
             # ---- STUDENT: few steps, no CFG, WITH gradients ----
             student_latent = self._sample(
                 model=model,

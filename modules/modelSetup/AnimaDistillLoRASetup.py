@@ -473,6 +473,9 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 text_encoder_dropout_probability=config.text_encoder.dropout_probability if not deterministic else None,
             )
             self._log_vram("after text encode")
+            print(f"[DEBUG-TEXT] text_encoder_output shape={text_encoder_output.shape} dtype={text_encoder_output.dtype} "
+                  f"min={text_encoder_output.min():.4f} max={text_encoder_output.max():.4f} "
+                  f"mean={text_encoder_output.mean():.4f} std={text_encoder_output.std():.4f}")
 
             latent_shape = batch["latent_image"].shape
             noise = torch.randn(

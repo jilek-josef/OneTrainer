@@ -126,7 +126,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     DISTILL_MODE: str = "image_pairs"
 
     # Progressive step scheduling: start high, decrease as loss improves
-    INITIAL_STUDENT_STEPS: int = 20
+    INITIAL_STUDENT_STEPS: int = 40
     MIN_STUDENT_STEPS: int = 1
     LOSS_THRESHOLD: float = 0.3
     CONSECUTIVE_STEPS_FOR_DECREASE: int = 10
@@ -408,6 +408,11 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                     velocity = velocity_uncond + cfg_scale * (velocity_cond - velocity_uncond)
                 else:
                     velocity = velocity_cond
+
+                if i == 0 or i == len(timesteps) - 1:
+                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={sigma:.4f} "
+                          f"latent_in min={latent_input.min():.4f} max={latent_input.max():.4f} "
+                          f"vel min={velocity.min():.4f} max={velocity.max():.4f} mean={velocity.mean():.4f}")
 
                 latent = scheduler.step(velocity, t, latent, return_dict=False)[0]
 

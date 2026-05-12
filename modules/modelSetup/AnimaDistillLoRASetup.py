@@ -125,6 +125,12 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     # Mode: "prompt_only" or "image_pairs" — auto-detected from batch if not set
     DISTILL_MODE: str = "image_pairs"
 
+    # Progressive step scheduling: start high, decrease as loss improves
+    INITIAL_STUDENT_STEPS: int = 20
+    MIN_STUDENT_STEPS: int = 1
+    LOSS_THRESHOLD: float = 0.3
+    CONSECUTIVE_STEPS_FOR_DECREASE: int = 10
+
     _feature_extractor: torch.nn.Module | None = None
     _image_transform: transforms.Compose | None = None
     _radio_model = None
@@ -149,6 +155,11 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             temp_device=temp_device,
             debug_mode=debug_mode,
         )
+
+        # Step scheduling state
+        self._current_student_steps = self.INITIAL_STUDENT_STEPS
+        self._consecutive_low_loss = 0
+        self._last_loss = float('inf')
 
     # ==================================================================
     # LoRA Setup
@@ -228,6 +239,29 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             train_progress: TrainProgress,
     ):
         self.__setup_requires_grad(model, config)
+
+    def on_step_end(self, loss: float):
+        """
+        Called by the trainer after each step with the computed loss.
+        Implements progressive step scheduling: decrease student steps
+        when loss stays below threshold for consecutive steps.
+        """
+        if loss < self.LOSS_THRESHOLD:
+            self._consecutive_low_loss += 1
+            if self._consecutive_low_loss >= self.CONSECUTIVE_STEPS_FOR_DECREASE:
+                if self._current_student_steps > self.MIN_STUDENT_STEPS:
+                    old_steps = self._current_student_steps
+                    self._current_student_steps = max(
+                        self.MIN_STUDENT_STEPS,
+                        self._current_student_steps // 2
+                    )
+                    print(f"[STEP-SCHEDULE] Loss {loss:.4f} < {self.LOSS_THRESHOLD} for {self.CONSECUTIVE_STEPS_FOR_DECREASE}+ steps. "
+                          f"Decreasing student steps: {old_steps} → {self._current_student_steps}")
+                self._consecutive_low_loss = 0
+        else:
+            self._consecutive_low_loss = 0
+
+        self._last_loss = loss
 
     # ==================================================================
     # Feature Extractor (EVA-02 + RADIO on CPU)
@@ -461,7 +495,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 model=model,
                 noise=latent,
                 text_encoder_output=text_encoder_output,
-                num_steps=self.STUDENT_STEPS,
+                num_steps=self._current_student_steps,
                 cfg_scale=self.STUDENT_CFG_SCALE,
                 use_lora=True,
             )

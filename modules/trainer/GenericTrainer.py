@@ -814,6 +814,11 @@ class GenericTrainer(BaseTrainer):
                             self.tensorboard.add_scalar("smooth_loss/train_step", ema_loss, train_progress.global_step)
 
                         accumulated_loss = 0.0
+
+                        # Call step scheduling hook if available (Distill LoRA)
+                        if hasattr(self.model_setup, 'on_step_end'):
+                            self.model_setup.on_step_end(accumulated_loss_cpu)
+
                         self.model_setup.after_optimizer_step(self.model, self.config, train_progress)
 
                         if self.model.ema:

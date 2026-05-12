@@ -539,13 +539,11 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                     timestep_t = sigma.expand(student_latent.shape[0]).to(model.train_dtype.torch_dtype())
                     latent_input = student_latent.to(dtype=model.train_dtype.torch_dtype())
                     
-                    velocity_cond = checkpoint(
-                        _student_transformer_step,
+                    velocity_cond = _student_transformer_step(
                         latent_input,
                         timestep_t,
                         text_encoder_output_dtype,
                         student_padding_mask,
-                        use_reentrant=False,
                     ).float()
                     
                     student_latent = student_scheduler.step(velocity_cond, t, student_latent, return_dict=False)[0]

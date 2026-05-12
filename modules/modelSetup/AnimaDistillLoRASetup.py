@@ -383,46 +383,35 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
 
         with torch.no_grad() if not use_lora else torch.enable_grad(), model.autocast_context:
             for i, t in enumerate(timesteps):
-                current_sigma = sigmas[i]
-                current_t = current_sigma / (current_sigma + 1)
-                c_in = 1 - current_t
-                c_skip = 1 - current_t
-                c_out = -current_t
-                timestep = current_t.expand(latent.shape[0]).to(model.train_dtype.torch_dtype())
-                
-                latent_model_input = latent * c_in
-                latent_model_input = latent_model_input.to(dtype=model.train_dtype.torch_dtype())
+                sigma = sigmas[i]
+                timestep_t = sigma.expand(latent.shape[0]).to(model.train_dtype.torch_dtype())
+                latent_input = latent.to(dtype=model.train_dtype.torch_dtype())
 
-                noise_pred_cond = checkpoint(
+                velocity_cond = checkpoint(
                     _transformer_step,
-                    latent_model_input,
-                    timestep,
+                    latent_input,
+                    timestep_t,
                     text_encoder_output_dtype,
                     padding_mask,
                     use_reentrant=False,
                 ).float()
-                noise_pred_cond = c_skip * latent + c_out * noise_pred_cond
 
                 if do_cfg:
-                    noise_pred_uncond = checkpoint(
+                    velocity_uncond = checkpoint(
                         _transformer_step,
-                        latent_model_input,
-                        timestep,
+                        latent_input,
+                        timestep_t,
                         uncond_text_encoder_output_dtype,
                         padding_mask,
                         use_reentrant=False,
                     ).float()
-                    noise_pred_uncond = c_skip * latent + c_out * noise_pred_uncond
-                    noise_pred = noise_pred_uncond + cfg_scale * (noise_pred_cond - noise_pred_uncond)
+                    velocity = velocity_uncond + cfg_scale * (velocity_cond - velocity_uncond)
                 else:
-                    noise_pred = noise_pred_cond
-
-                # Convert to velocity for scheduler
-                velocity = (latent - noise_pred) / current_sigma
+                    velocity = velocity_cond
 
                 if i == 0 or i == len(timesteps) - 1:
-                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={current_sigma:.4f} "
-                          f"latent_in min={latent_model_input.min():.4f} max={latent_model_input.max():.4f} "
+                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={sigma:.4f} "
+                          f"latent_in min={latent_input.min():.4f} max={latent_input.max():.4f} "
                           f"vel min={velocity.min():.4f} max={velocity.max():.4f} mean={velocity.mean():.4f}")
 
                 latent = scheduler.step(velocity, t, latent, return_dict=False)[0]
@@ -518,14 +507,48 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 print("[WARNING] Transformer weights contain Inf!")
 
             # ---- STUDENT: few steps, no CFG, WITH gradients ----
-            student_latent = self._sample(
-                model=model,
-                noise=latent,
-                text_encoder_output=text_encoder_output,
-                num_steps=self._current_student_steps,
-                cfg_scale=self.STUDENT_CFG_SCALE,
-                use_lora=True,
+            # INLINE the sampling loop (like EmbeddingLoRA) to test if _sample() helper is the issue
+            student_scheduler = copy.deepcopy(model.noise_scheduler)
+            student_scheduler.set_timesteps(self._current_student_steps, device=self.train_device)
+            student_timesteps = student_scheduler.timesteps
+            student_sigmas = student_scheduler.sigmas.to(self.train_device)
+            
+            student_latent = latent.clone()
+            b, c, t, h, w = student_latent.shape
+            student_padding_mask = student_latent.new_zeros(
+                1, 1,
+                h * (2 ** len(model.vae.temperal_downsample)),
+                w * (2 ** len(model.vae.temperal_downsample)),
+                dtype=model.train_dtype.torch_dtype(),
             )
+            
+            text_encoder_output_dtype = text_encoder_output.to(dtype=model.train_dtype.torch_dtype())
+            
+            def _student_transformer_step(hidden_states, timestep, encoder_hidden_states, padding_mask):
+                return model.transformer(
+                    hidden_states=hidden_states,
+                    timestep=timestep,
+                    encoder_hidden_states=encoder_hidden_states,
+                    padding_mask=padding_mask,
+                    return_dict=False,
+                )[0]
+            
+            with model.autocast_context:
+                for i, t in enumerate(student_timesteps):
+                    sigma = student_sigmas[i]
+                    timestep_t = sigma.expand(student_latent.shape[0]).to(model.train_dtype.torch_dtype())
+                    latent_input = student_latent.to(dtype=model.train_dtype.torch_dtype())
+                    
+                    velocity_cond = checkpoint(
+                        _student_transformer_step,
+                        latent_input,
+                        timestep_t,
+                        text_encoder_output_dtype,
+                        student_padding_mask,
+                        use_reentrant=False,
+                    ).float()
+                    
+                    student_latent = student_scheduler.step(velocity_cond, t, student_latent, return_dict=False)[0]
             student_images = self._decode_latent(model, student_latent)
             print(f"[DEBUG-STUDENT] latent shape={student_latent.shape} min={student_latent.min():.4f} max={student_latent.max():.4f} mean={student_latent.mean():.4f} std={student_latent.std():.4f}")
             print(f"[DEBUG-STUDENT] image shape={student_images.shape} min={student_images.min():.4f} max={student_images.max():.4f} mean={student_images.mean():.4f} std={student_images.std():.4f}")

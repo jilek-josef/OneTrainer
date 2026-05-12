@@ -500,6 +500,8 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 use_lora=True,
             )
             student_images = self._decode_latent(model, student_latent)
+            print(f"[DEBUG-STUDENT] latent shape={student_latent.shape} min={student_latent.min():.4f} max={student_latent.max():.4f} mean={student_latent.mean():.4f} std={student_latent.std():.4f}")
+            print(f"[DEBUG-STUDENT] image shape={student_images.shape} min={student_images.min():.4f} max={student_images.max():.4f} mean={student_images.mean():.4f} std={student_images.std():.4f}")
 
             self._log_vram("after student decode")
 
@@ -531,6 +533,8 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                         use_lora=False,
                     )
                     teacher_images = self._decode_latent(model, teacher_latent)
+                print(f"[DEBUG-TEACHER] latent shape={teacher_latent.shape} min={teacher_latent.min():.4f} max={teacher_latent.max():.4f} mean={teacher_latent.mean():.4f} std={teacher_latent.std():.4f}")
+                print(f"[DEBUG-TEACHER] image shape={teacher_images.shape} min={teacher_images.min():.4f} max={teacher_images.max():.4f} mean={teacher_images.mean():.4f} std={teacher_images.std():.4f}")
                 self._log_vram("after teacher decode")
 
             # Restore LoRA dropout

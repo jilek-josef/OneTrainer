@@ -442,6 +442,14 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 generator=generator,
             )
 
+            # Ensure noise has 5D shape [B, C, T, H, W] for the transformer
+            if noise.dim() == 4:
+                # Expand to 5D by adding temporal dimension T=1
+                noise = noise.unsqueeze(2)
+            
+            # Now latent is 5D: [B, C, T, H, W]
+            latent = noise
+            
             # Disable LoRA dropout for deterministic sampling
             original_dropout = config.dropout_probability
             model.transformer_lora.set_dropout(0.0)
@@ -450,7 +458,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             # ---- STUDENT: few steps, no CFG, WITH gradients ----
             student_latent = self._sample(
                 model=model,
-                noise=noise,
+                noise=latent,
                 text_encoder_output=text_encoder_output,
                 num_steps=self.STUDENT_STEPS,
                 cfg_scale=self.STUDENT_CFG_SCALE,

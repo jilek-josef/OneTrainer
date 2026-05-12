@@ -113,7 +113,6 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     FEATURE_DEVICE: str = "cpu"
     RADIO_WEIGHT = 0.7
     EVA_WEIGHT = 0.3
-    PIXEL_WEIGHT = 0.5  # Weight for pixel-level MSE loss
 
     # Teacher config (frozen, uses CFG)
     TEACHER_STEPS: int = 30
@@ -127,7 +126,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     DISTILL_MODE: str = "image_pairs"
 
     # Progressive step scheduling: start high, decrease as loss improves
-    INITIAL_STUDENT_STEPS: int = 40
+    INITIAL_STUDENT_STEPS: int = 20
     MIN_STUDENT_STEPS: int = 1
     LOSS_THRESHOLD: float = 0.3
     CONSECUTIVE_STEPS_FOR_DECREASE: int = 10
@@ -410,11 +409,6 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 else:
                     velocity = velocity_cond
 
-                if i == 0 or i == len(timesteps) - 1:
-                    print(f"[DEBUG-SAMPLE-{use_lora}] step={i}/{len(timesteps)} t={t:.4f} sigma={sigma:.4f} "
-                          f"latent_in min={latent_input.min():.4f} max={latent_input.max():.4f} "
-                          f"vel min={velocity.min():.4f} max={velocity.max():.4f} mean={velocity.mean():.4f}")
-
                 latent = scheduler.step(velocity, t, latent, return_dict=False)[0]
 
         if do_cfg:
@@ -474,9 +468,6 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 text_encoder_dropout_probability=config.text_encoder.dropout_probability if not deterministic else None,
             )
             self._log_vram("after text encode")
-            print(f"[DEBUG-TEXT] text_encoder_output shape={text_encoder_output.shape} dtype={text_encoder_output.dtype} "
-                  f"min={text_encoder_output.min():.4f} max={text_encoder_output.max():.4f} "
-                  f"mean={text_encoder_output.mean():.4f} std={text_encoder_output.std():.4f}")
 
             latent_shape = batch["latent_image"].shape
             noise = torch.randn(
@@ -499,55 +490,15 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             model.transformer_lora.set_dropout(0.0)
             model.transformer.eval()
 
-            # Check model weights for NaN/Inf
-            has_nan = any(p.isnan().any() for p in model.transformer.parameters() if p is not None)
-            has_inf = any(p.isinf().any() for p in model.transformer.parameters() if p is not None)
-            if has_nan:
-                print("[WARNING] Transformer weights contain NaN!")
-            if has_inf:
-                print("[WARNING] Transformer weights contain Inf!")
-
-            # ---- STUDENT: few steps, no CFG, WITH gradients ----
-            # INLINE the sampling loop (like EmbeddingLoRA) to test if _sample() helper is the issue
-            student_scheduler = copy.deepcopy(model.noise_scheduler)
-            student_scheduler.set_timesteps(self._current_student_steps, device=self.train_device)
-            student_timesteps = student_scheduler.timesteps
-            student_sigmas = student_scheduler.sigmas.to(self.train_device)
-            
-            student_latent = latent.clone()
-            b, c, t, h, w = student_latent.shape
-            student_padding_mask = student_latent.new_zeros(
-                1, 1,
-                h * (2 ** len(model.vae.temperal_downsample)),
-                w * (2 ** len(model.vae.temperal_downsample)),
-                dtype=model.train_dtype.torch_dtype(),
+            # ---- STUDENT: same as teacher for testing ----
+            student_latent = self._sample(
+                model=model,
+                noise=latent,
+                text_encoder_output=text_encoder_output,
+                num_steps=self.TEACHER_STEPS,  # TEST: 30 steps
+                cfg_scale=self.TEACHER_CFG_SCALE,  # TEST: CFG=5.0
+                use_lora=False,  # TEST: no_grad
             )
-            
-            text_encoder_output_dtype = text_encoder_output.to(dtype=model.train_dtype.torch_dtype())
-            
-            def _student_transformer_step(hidden_states, timestep, encoder_hidden_states, padding_mask):
-                return model.transformer(
-                    hidden_states=hidden_states,
-                    timestep=timestep,
-                    encoder_hidden_states=encoder_hidden_states,
-                    padding_mask=padding_mask,
-                    return_dict=False,
-                )[0]
-            
-            with model.autocast_context:
-                for i, t in enumerate(student_timesteps):
-                    sigma = student_sigmas[i]
-                    timestep_t = sigma.expand(student_latent.shape[0]).to(model.train_dtype.torch_dtype())
-                    latent_input = student_latent.to(dtype=model.train_dtype.torch_dtype())
-                    
-                    velocity_cond = _student_transformer_step(
-                        latent_input,
-                        timestep_t,
-                        text_encoder_output_dtype,
-                        student_padding_mask,
-                    ).float()
-                    
-                    student_latent = student_scheduler.step(velocity_cond, t, student_latent, return_dict=False)[0]
             student_images = self._decode_latent(model, student_latent)
             print(f"[DEBUG-STUDENT] latent shape={student_latent.shape} min={student_latent.min():.4f} max={student_latent.max():.4f} mean={student_latent.mean():.4f} std={student_latent.std():.4f}")
             print(f"[DEBUG-STUDENT] image shape={student_images.shape} min={student_images.min():.4f} max={student_images.max():.4f} mean={student_images.mean():.4f} std={student_images.std():.4f}")
@@ -709,32 +660,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             print(f"[LOSS-PAIR] EVA={loss_eva.item():.4f} RADIO={loss_radio.item():.4f} "
                   f"TOTAL={self.EVA_WEIGHT * loss_eva.item() + self.RADIO_WEIGHT * loss_radio.item():.4f}")
 
-        # Pixel-level loss to prevent flat images
-        if distill_mode == "prompt_only" and teacher_images is not None:
-            loss_pixel = F.mse_loss(student_images, teacher_images)
-        else:
-            # For image_pairs, load reference images
-            image_paths = batch["image_path"]
-            if isinstance(image_paths, str):
-                image_paths = [image_paths]
-            ref_pil = [Image.open(p).convert("RGB") for p in image_paths]
-            ref_tensors = []
-            for img in ref_pil:
-                arr = np.array(img).astype(np.float32) / 255.0
-                tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
-                ref_tensors.append(tensor)
-            ref_images = torch.cat(ref_tensors).to(student_images.device)
-            # Resize to match student size
-            if ref_images.shape[-2:] != student_images.shape[-2:]:
-                ref_images = torch.nn.functional.interpolate(
-                    ref_images, size=student_images.shape[-2:], mode='bilinear', align_corners=False
-                )
-            loss_pixel = F.mse_loss(student_images, ref_images)
-
-        total_loss = self.EVA_WEIGHT * loss_eva + self.RADIO_WEIGHT * loss_radio + self.PIXEL_WEIGHT * loss_pixel
-
-        print(f"[LOSS] EVA={loss_eva.item():.4f} RADIO={loss_radio.item():.4f} PIXEL={loss_pixel.item():.4f} "
-              f"TOTAL={total_loss.item():.4f}")
+        total_loss = self.EVA_WEIGHT * loss_eva + self.RADIO_WEIGHT * loss_radio
 
         self._log_vram("calculate_loss end")
         return total_loss

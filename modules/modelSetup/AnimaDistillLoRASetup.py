@@ -478,10 +478,11 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 if isinstance(image_paths, str):
                     image_paths = [image_paths]
                 # Check if at least one image path exists and is a real file
-                has_real_images = any(
-                    p and os.path.isfile(p) and not p.endswith(".txt")
-                    for p in image_paths
-                )
+                has_real_images = False
+                for p in image_paths:
+                    if p and os.path.isfile(p) and not p.endswith(".txt"):
+                        has_real_images = True
+                        break
                 if not has_real_images:
                     distill_mode = "prompt_only"
 

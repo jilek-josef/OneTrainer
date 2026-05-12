@@ -1182,6 +1182,11 @@ class TrainConfig(BaseConfig):
         data.append(("save_skip_first", 0, int, False))
         data.append(("save_filename_prefix", "", str, False))
 
+        # distillation settings
+        data.append(("distill_mode", "image_pairs", str, False))
+        data.append(("student_steps", 1, int, False))
+        data.append(("teacher_steps", 30, int, False))
+
         # secrets
         secrets = SecretsConfig.default_values()
         data.append(("secrets", secrets, SecretsConfig, False))

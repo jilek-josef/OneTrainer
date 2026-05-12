@@ -121,8 +121,8 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     STUDENT_STEPS: int = 1
     STUDENT_CFG_SCALE: float = 1.0
 
-    # Mode: "prompt_only" or "image_pairs"
-    DISTILL_MODE: str = "prompt_only"
+    # Mode: "prompt_only" or "image_pairs" — auto-detected from batch if not set
+    DISTILL_MODE: str = "image_pairs"
 
     _feature_extractor: torch.nn.Module | None = None
     _image_transform: transforms.Compose | None = None
@@ -462,7 +462,21 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
 
             # ---- TEACHER: many steps, with CFG, NO gradients ----
             teacher_images = None
-            if self.DISTILL_MODE == "prompt_only":
+            # Auto-detect mode: if batch has real image paths that exist, use image_pairs
+            distill_mode = self.DISTILL_MODE
+            if distill_mode == "image_pairs":
+                image_paths = batch.get("image_path", [])
+                if isinstance(image_paths, str):
+                    image_paths = [image_paths]
+                # Check if at least one image path exists and is a real file
+                has_real_images = any(
+                    p and os.path.isfile(p) and not p.endswith(".txt")
+                    for p in image_paths
+                )
+                if not has_real_images:
+                    distill_mode = "prompt_only"
+
+            if distill_mode == "prompt_only":
                 with torch.no_grad():
                     teacher_latent = self._sample(
                         model=model,
@@ -550,7 +564,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
         student_features_radio = self._embed_pil_radio(student_pil, target_resolution=target_resolution)
         self._log_vram("after student RADIO features")
 
-        if self.DISTILL_MODE == "prompt_only" and teacher_images is not None:
+        if distill_mode == "prompt_only" and teacher_images is not None:
             # ---- Mode 1: Distill from teacher ----
             # Teacher features (no gradients)
             with torch.no_grad():

@@ -507,13 +507,14 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
                 print("[WARNING] Transformer weights contain Inf!")
 
             # ---- STUDENT: few steps, no CFG, WITH gradients ----
+            # TEMPORARY TEST: use use_lora=False to see if grad state is the issue
             student_latent = self._sample(
                 model=model,
                 noise=latent,
                 text_encoder_output=text_encoder_output,
                 num_steps=self._current_student_steps,
                 cfg_scale=self.STUDENT_CFG_SCALE,
-                use_lora=True,
+                use_lora=False,  # TEST: was True
             )
             student_images = self._decode_latent(model, student_latent)
             print(f"[DEBUG-STUDENT] latent shape={student_latent.shape} min={student_latent.min():.4f} max={student_latent.max():.4f} mean={student_latent.mean():.4f} std={student_latent.std():.4f}")

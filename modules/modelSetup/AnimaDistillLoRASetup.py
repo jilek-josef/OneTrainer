@@ -113,6 +113,7 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
     FEATURE_DEVICE: str = "cpu"
     RADIO_WEIGHT = 0.7
     EVA_WEIGHT = 0.3
+    PIXEL_WEIGHT = 0.5  # Weight for pixel-level MSE loss
 
     # Teacher config (frozen, uses CFG)
     TEACHER_STEPS: int = 30
@@ -708,7 +709,32 @@ class AnimaDistillLoRASetup(BaseAnimaSetup):
             print(f"[LOSS-PAIR] EVA={loss_eva.item():.4f} RADIO={loss_radio.item():.4f} "
                   f"TOTAL={self.EVA_WEIGHT * loss_eva.item() + self.RADIO_WEIGHT * loss_radio.item():.4f}")
 
-        total_loss = self.EVA_WEIGHT * loss_eva + self.RADIO_WEIGHT * loss_radio
+        # Pixel-level loss to prevent flat images
+        if distill_mode == "prompt_only" and teacher_images is not None:
+            loss_pixel = F.mse_loss(student_images, teacher_images)
+        else:
+            # For image_pairs, load reference images
+            image_paths = batch["image_path"]
+            if isinstance(image_paths, str):
+                image_paths = [image_paths]
+            ref_pil = [Image.open(p).convert("RGB") for p in image_paths]
+            ref_tensors = []
+            for img in ref_pil:
+                arr = np.array(img).astype(np.float32) / 255.0
+                tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
+                ref_tensors.append(tensor)
+            ref_images = torch.cat(ref_tensors).to(student_images.device)
+            # Resize to match student size
+            if ref_images.shape[-2:] != student_images.shape[-2:]:
+                ref_images = torch.nn.functional.interpolate(
+                    ref_images, size=student_images.shape[-2:], mode='bilinear', align_corners=False
+                )
+            loss_pixel = F.mse_loss(student_images, ref_images)
+
+        total_loss = self.EVA_WEIGHT * loss_eva + self.RADIO_WEIGHT * loss_radio + self.PIXEL_WEIGHT * loss_pixel
+
+        print(f"[LOSS] EVA={loss_eva.item():.4f} RADIO={loss_radio.item():.4f} PIXEL={loss_pixel.item():.4f} "
+              f"TOTAL={total_loss.item():.4f}")
 
         self._log_vram("calculate_loss end")
         return total_loss
